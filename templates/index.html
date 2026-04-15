@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Congestion Prediction</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🚗 Traffic Congestion Predictor</h1>
+            <p class="subtitle">LSTM-Based Time-Series Prediction</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Input Section -->
+            <section class="input-section">
+                <h2>Enter Traffic Data</h2>
+                
+                <!-- Time Selection -->
+                <div class="form-group">
+                    <label for="hour">Hour of Day (0-23)</label>
+                    <input type="number" id="hour" min="0" max="23" value="9" placeholder="e.g., 9">
+                </div>
+
+                <div class="form-group">
+                    <label for="day">Day of Week (0=Monday, 6=Sunday)</label>
+                    <select id="day">
+                        <option value="0">Monday</option>
+                        <option value="1" selected>Tuesday</option>
+                        <option value="2">Wednesday</option>
+                        <option value="3">Thursday</option>
+                        <option value="4">Friday</option>
+                        <option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                </div>
+
+                <!-- Past Values -->
+                <div class="form-group">
+                    <label>Past Traffic Values (Last 24 Hours)</label>
+                    <div class="values-grid" id="valuesGrid">
+                        <!-- Values will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="button-group">
+                    <button type="button" id="predictBtn" class="btn btn-primary">
+                        Predict Traffic
+                    </button>
+                    <button type="button" id="autoFillBtn" class="btn btn-secondary">
+                        Auto-Fill Sample Data
+                    </button>
+                    <button type="button" id="randomBtn" class="btn btn-secondary">
+                        Random Values
+                    </button>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="resultsSection">
+                <h2>Prediction Results</h2>
+                
+                <div class="result-card">
+                    <div class="result-item">
+                        <span class="result-label">Congestion Level:</span>
+                        <span class="result-value" id="congestionLevel">-</span>
+                    </div>
+                    
+                    <div class="result-item">
+                        <span class="result-label">Predicted Value:</span>
+                        <span class="result-value" id="predictionValue">-</span>
+                    </div>
+                    
+                    <div class="result-item">
+                        <span class="result-label">Estimated Vehicles:</span>
+                        <span class="result-value" id="vehicleCount">-</span>
+                    </div>
+                </div>
+
+                <div class="message-box" id="messageBox">
+                    <p id="resultMessage">Enter data and click Predict to see results.</p>
+                </div>
+            </section>
+
+            <!-- Visualization Section -->
+            <section class="visualization-section">
+                <h2>Traffic Prediction History</h2>
+                <div class="chart-container" id="chartContainer">
+                    <canvas id="predictionChart"></canvas>
+                </div>
+                <button type="button" id="refreshChartBtn" class="btn btn-secondary">
+                    Refresh Chart
+                </button>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Built with TensorFlow/Keras LSTM | Flask Backend</p>
+            <p class="about-link"><a href="/about">Learn about LSTM</a></p>
+        </footer>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <p>Predicting...</p>
+    </div>
+
+    <script>
+        // Global variables
+        let pastValues = [];
+        let predictionHistory = [];
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeValuesGrid();
+            setupEventListeners();
+            autoFillSampleData();
+        });
+
+        // Initialize the values input grid
+        function initializeValuesGrid() {
+            const grid = document.getElementById('valuesGrid');
+            grid.innerHTML = '';
+            
+            for (let i = 0; i < 24; i++) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'value-input-wrapper';
+                
+                const label = document.createElement('label');
+                label.textContent = (i + 1) + 'h ago';
+                
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'value-input';
+                input.id = 'value' + i;
+                input.min = '0';
+                input.max = '200';
+                input.placeholder = '0';
+                
+                wrapper.appendChild(label);
+                wrapper.appendChild(input);
+                grid.appendChild(wrapper);
+            }
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            document.getElementById('predictBtn').addEventListener('click', makePrediction);
+            document.getElementById('autoFillBtn').addEventListener('click', autoFillSampleData);
+            document.getElementById('randomBtn').addEventListener('click', fillRandomData);
+            document.getElementById('refreshChartBtn').addEventListener('click', refreshChart);
+        }
+
+        // Auto-fill with sample data from server
+        function autoFillSampleData() {
+            showLoading(true);
+            
+            fetch('/sample-data?days=1&day=' + document.getElementById('day').value)
+                .then(response => response.json())
+                .then(data => {
+                    pastValues = data.values;
+                    updateValuesGrid(pastValues);
+                    document.getElementById('hour').value = data.hour;
+                    document.getElementById('day').value = data.day;
+                    showLoading(false);
+                })
+                .catch(error => {
+                    console.error('Error fetching sample data:', error);
+                    fillRandomData();
+                    showLoading(false);
+                });
+        }
+
+        // Fill with random realistic traffic data
+        function fillRandomData() {
+            const hour = parseInt(document.getElementById('hour').value) || 9;
+            const day = parseInt(document.getElementById('day').value) || 1;
+            
+            pastValues = [];
+            for (let i = 0; i < 24; i++) {
+                let baseValue;
+                
+                // Simulate realistic traffic patterns
+                if (hour >= 7 && hour <= 9) {
+                    baseValue = 60 + Math.random() * 30; // Morning rush
+                } else if (hour >= 17 && hour <= 19) {
+                    baseValue = 70 + Math.random() * 25; // Evening rush
+                } else if (hour >= 22 || hour <= 5) {
+                    baseValue = 10 + Math.random() * 15; // Night
+                } else {
+                    baseValue = 35 + Math.random() * 25; // Normal hours
+                }
+                
+                // Weekend adjustment
+                if (day >= 5) {
+                    if (hour >= 10 && hour <= 16) {
+                        baseValue = 50 + Math.random() * 20;
+                    }
+                }
+                
+                pastValues.push(Math.round(baseValue));
+            }
+            
+            updateValuesGrid(pastValues);
+        }
+
+        // Update the values grid with data
+        function updateValuesGrid(values) {
+            for (let i = 0; i < 24; i++) {
+                const input = document.getElementById('value' + i);
+                if (input && values[i] !== undefined) {
+                    input.value = values[i];
+                }
+            }
+        }
+
+        // Get values from grid
+        function getValuesFromGrid() {
+            const values = [];
+            for (let i = 0; i < 24; i++) {
+                const input = document.getElementById('value' + i);
+                const value = parseInt(input.value) || 0;
+                values.push(value);
+            }
+            return values;
+        }
+
+        // Make prediction
+        function makePrediction() {
+            const hour = parseInt(document.getElementById('hour').value);
+            const day = parseInt(document.getElementById('day').value);
+            const pastValues = getValuesFromGrid();
+            
+            // Validate inputs
+            if (isNaN(hour) || hour < 0 || hour > 23) {
+                showMessage('Please enter a valid hour (0-23)', 'error');
+                return;
+            }
+            
+            if (isNaN(day) || day < 0 || day > 6) {
+                showMessage('Please select a valid day', 'error');
+                return;
+            }
+            
+            showLoading(true);
+            
+            // Send request
+            fetch('/predict', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    hour: hour,
+                    day: day,
+                    past_values: pastValues
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                showLoading(false);
+                
+                if (data.success) {
+                    displayResults(data);
+                    addToHistory(data.prediction);
+                    updateChart();
+                } else {
+                    showMessage('Error: ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showLoading(false);
+                showMessage('Network error: ' + error, 'error');
+            });
+        }
+
+        // Display prediction results
+        function displayResults(data) {
+            document.getElementById('congestionLevel').textContent = data.congestion_level;
+            document.getElementById('predictionValue').textContent = data.prediction.toFixed(4);
+            document.getElementById('vehicleCount').textContent = data.vehicle_count;
+            
+            // Update congestion level styling
+            const levelElement = document.getElementById('congestionLevel');
+            levelElement.className = 'result-value congestion-' + data.congestion_level.toLowerCase();
+            
+            showMessage(data.message, 'success');
+        }
+
+        // Add prediction to history
+        function addToHistory(prediction) {
+            predictionHistory.push(prediction);
+            if (predictionHistory.length > 50) {
+                predictionHistory.shift();
+            }
+        }
+
+        // Update the chart
+        function updateChart() {
+            const canvas = document.getElementById('predictionChart');
+            const ctx = canvas.getContext('2d');
+            
+            // Set canvas size
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = 300;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (predictionHistory.length < 2) {
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#666';
+                ctx.textAlign = 'center';
+                ctx.fillText('Make more predictions to see the chart', canvas.width / 2, canvas.height / 2);
+                return;
+            }
+            
+            const padding = 50;
+            const chartWidth = canvas.width - padding * 2;
+            const chartHeight = canvas.height - padding * 2;
+            
+            // Draw grid
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= 4; i++) {
+                const y = padding + (chartHeight / 4) * i;
+                ctx.beginPath();
+                ctx.moveTo(padding, y);
+                ctx.lineTo(canvas.width - padding, y);
+                ctx.stroke();
+                
+                // Labels
+                ctx.font = '12px Arial';
+                ctx.fillStyle = '#666';
+                ctx.textAlign = 'right';
+                ctx.fillText((1 - i / 4).toFixed(2), padding - 10, y + 4);
+            }
+            
+            // Draw line
+            ctx.strokeStyle = '#4CAF50';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            predictionHistory.forEach((value, index) => {
+                const x = padding + (chartWidth / (predictionHistory.length - 1)) * index;
+                const y = padding + chartHeight * (1 - value);
+                
+                if (index === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            
+            ctx.stroke();
+            
+            // Draw points
+            ctx.fillStyle = '#4CAF50';
+            predictionHistory.forEach((value, index) => {
+                const x = padding + (chartWidth / (predictionHistory.length - 1)) * index;
+                const y = padding + chartHeight * (1 - value);
+                
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Labels
+            ctx.font = '14px Arial';
+            ctx.fillStyle = '#333';
+            ctx.textAlign = 'center';
+            ctx.fillText('Prediction Index', canvas.width / 2, canvas.height - 10);
+            
+            ctx.save();
+            ctx.translate(15, canvas.height / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText('Traffic Value', 0, 0);
+            ctx.restore();
+        }
+
+        // Refresh chart
+        function refreshChart() {
+            // Fetch visualization from server
+            fetch('/visualize')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Server returns base64 image, update img src
+                        const chartImg = document.createElement('img');
+                        chartImg.src = 'data:image/png;base64,' + data.image;
+                        chartImg.style.maxWidth = '100%';
+                        
+                        const container = document.getElementById('chartContainer');
+                        container.innerHTML = '';
+                        container.appendChild(chartImg);
+                    }
+                })
+                .catch(error => {
+                    console.log('Using local chart');
+                    updateChart();
+                });
+        }
+
+        // Show message
+        function showMessage(message, type) {
+            const messageBox = document.getElementById('messageBox');
+            const messageElement = document.getElementById('resultMessage');
+            
+            messageElement.textContent = message;
+            messageBox.className = 'message-box message-' + type;
+        }
+
+        // Show/hide loading
+        function showLoading(show) {
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.style.display = show ? 'flex' : 'none';
+        }
+    </script>
+</body>
+</html>
