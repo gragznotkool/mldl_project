@@ -21,7 +21,11 @@ from utils import (
     extract_time_features,
     get_congestion_level,
     generate_sample_data,
-    SEQUENCE_LENGTH
+    SEQUENCE_LENGTH,
+    apply_heuristic_modifiers,
+    calculate_metrics_from_prediction,
+    generate_hourly_forecast,
+    generate_weekly_pattern
 )
 
 # Initialize Flask app
@@ -206,24 +210,6 @@ def index():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """
-    API endpoint for traffic prediction.
-    
-    Expected JSON input:
-    {
-        "hour": 9,
-        "day": 1,
-        "past_values": [35, 40, 45, ...]  // Last 24 traffic values
-    }
-    
-    Returns:
-    {
-        "prediction": 0.65,
-        "congestion_level": "Medium",
-        "vehicle_count": 58,
-        "success": true
-    }
-    """
     global last_predictions
     
     try:
@@ -234,38 +220,58 @@ def predict():
         day = int(data.get('day', 1))
         past_values = data.get('past_values', [])
         
+        # Extract new advanced parameters
+        season = data.get('season', 'Spring')
+        weather = data.get('weather', 'Clear')
+        road_type = data.get('road_type', 'Highway')
+        special_factors = data.get('special_factors', [])
+        
         # Validate input
         if hour < 0 or hour > 23:
             return jsonify({'success': False, 'error': 'Hour must be 0-23'}), 400
-        
         if day < 0 or day > 6:
             return jsonify({'success': False, 'error': 'Day must be 0-6'}), 400
-        
         if len(past_values) < 1:
             return jsonify({'success': False, 'error': 'At least one past value required'}), 400
         
         # Prepare data
         input_data = prepare_prediction_data(hour, day, past_values)
         
-        # Make prediction
-        normalized_pred = make_prediction(input_data)
+        # Make base model prediction
+        raw_pred = make_prediction(input_data)
         
-        # Get congestion level
-        congestion = get_congestion_level(normalized_pred)
+        # Apply programmatic modifier layer
+        adjusted_pred, factors_breakdown = apply_heuristic_modifiers(
+            raw_pred, season, weather, road_type, special_factors
+        )
         
-        # Convert to actual vehicle count
-        vehicle_count = denormalize_prediction(normalized_pred)
+        # Get classical output
+        congestion = get_congestion_level(adjusted_pred)
+        vehicle_count = denormalize_prediction(adjusted_pred)
         
-        # Store for visualization
-        last_predictions.append(normalized_pred)
+        # Calculate robust metrics
+        target_metrics = calculate_metrics_from_prediction(adjusted_pred)
+        
+        # Generate chart arrays for frontend
+        hourly_forecast = generate_hourly_forecast(raw_pred, adjusted_pred)
+        weekly_pattern = generate_weekly_pattern()
+        
+        # Store for visualization (legacy/fallback)
+        last_predictions.append(adjusted_pred)
         if len(last_predictions) > 50:
             last_predictions = last_predictions[-50:]
         
         return jsonify({
             'success': True,
-            'prediction': float(normalized_pred),
+            'prediction': float(adjusted_pred),
             'congestion_level': congestion,
             'vehicle_count': vehicle_count,
+            'metrics': target_metrics,
+            'charts': {
+                'hourly_forecast': hourly_forecast,
+                'factor_contribution': factors_breakdown,
+                'weekly_pattern': weekly_pattern
+            },
             'message': f'Predicted {congestion.lower()} traffic with approximately {vehicle_count} vehicles'
         })
         

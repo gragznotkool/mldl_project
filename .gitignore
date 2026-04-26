@@ -40,3 +40,5 @@ static/predictions_plot.png
 # OS
 .DS_Store
 Thumbs.db
+
+.venv
